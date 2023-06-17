@@ -65,8 +65,13 @@ public class AutomowerConnect {
         try await getToken(for: request)
     }
     
-    public func getMowers() async throws -> Data {
-        return try await get(.mowers)
+    public func getMowers() async throws -> [String] {
+        let data = try await get(.mowers)
+        let mowers = try JSONDecoder().decode(MowersDTO.self, from: data)
+        
+        return mowers.data.map {
+            $0.attributes.system.name
+        }
     }
     
     func get(_ endpoint: Endpoint) async throws -> Data {
@@ -78,9 +83,7 @@ public class AutomowerConnect {
         request.addValue("Bearer \(token.accessToken)", forHTTPHeaderField: "Authorization")
         request.addValue("husqvarna", forHTTPHeaderField: "Authorization-Provider")
         request.addValue(applicationKey, forHTTPHeaderField: "X-Api-Key")
-        
-        print(request.allHTTPHeaderFields ?? [:])
-        
+                
         let (data, response) = try await URLSession.shared.data(for: request)
         if let httpResponse = response as? HTTPURLResponse {
             switch httpResponse.statusCode {
@@ -91,6 +94,8 @@ public class AutomowerConnect {
                 throw AutomowerConnectError.invalidStatusCode(httpResponse.statusCode)
             }
         }
+        
+        print(String(data: data, encoding: .utf8) ?? "<none>")
         
         return data
     }
