@@ -7,12 +7,6 @@ let logger = Logger(subsystem: "com.topdesk.AutomowerConnect", category: "authen
 
 public class AutomowerConnect {
         
-    public enum LoginState {
-        case readyForLogin
-        case failed(error: AutomowerConnectError)
-        case loggedIn
-    }
-    
     let applicationKey: String
     let clientSecret: String
 
@@ -33,16 +27,15 @@ public class AutomowerConnect {
         print("Received response from authentication service")
         
         guard let queryItems = URLComponents(string: urlWithToken.absoluteString)?.queryItems,
-              let code = queryItems.filter({ $0.name == "code" }).first?.value,
-              let state = queryItems.filter({ $0.name == "state" }).first?.value else {
+              let codeProperty = queryItems.filter({ $0.name == "code" }).first?.value,
+              let stateProperty = queryItems.filter({ $0.name == "state" }).first?.value else {
             throw AutomowerConnectError.receivedInvalidResponse
         }
         
-        let request = try Endpoint.tokenRequest(clientId: applicationKey, clientSecret: clientSecret, code: code, redirectURI: Endpoint.redirectUri, state: state)
+        let request = try Endpoint.tokenRequest(clientId: applicationKey, clientSecret: clientSecret, code: codeProperty, redirectURI: Endpoint.redirectUri, state: stateProperty)
         
         let (data, response) = try await URLSession.shared.data(for: request)
         if let httpResponse = response as? HTTPURLResponse {
-//            print("Got response status:",httpResponse.statusCode)
             switch httpResponse.statusCode {
             case 200, 201: break
             case 400: throw AutomowerConnectError.badRequest
@@ -51,19 +44,13 @@ public class AutomowerConnect {
                 throw AutomowerConnectError.invalidStatusCode(httpResponse.statusCode)
             }
         }
-        
-        print("Got response")
-        print(String(data: data, encoding: .utf8)!)
-        
-        var token: TokenResponse
+                
         do {
-            token = try JSONDecoder().decode(TokenResponse.self, from: data)
+            var tokenResponse = try JSONDecoder().decode(TokenResponse.self, from: data)
+            token = Token(from: tokenResponse)
         } catch {
             throw AutomowerConnectError.cannotDecode(error)
         }
-        
-        print(token)
-        
     }
     
 }
