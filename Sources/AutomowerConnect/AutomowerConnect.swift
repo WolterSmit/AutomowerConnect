@@ -10,13 +10,13 @@ public class AutomowerConnect {
     public enum LoginState {
         case readyForLogin
         case failed(error: AutomowerConnectError)
-        case loggenIn
+        case loggedIn
     }
     
     let applicationKey: String
     let clientSecret: String
-    let redirectSchema = "automower"
-    var redirectUri: String { "\(redirectSchema)://" }
+
+    var token: Token?
     
     public init(applicationKey: String, clientSecret: String) {
         self.applicationKey = applicationKey
@@ -24,11 +24,11 @@ public class AutomowerConnect {
     }
     
     public func startAuthentication(session: WebAuthenticationSession) async throws {
-        let authenticateURL = try Endpoint.authenticate(clientId: applicationKey, redirect: redirectUri).url()
+        let authenticateURL = try Endpoint.authenticate(clientId: applicationKey, redirect: Endpoint.redirectUri).url()
         
         print("Starting authentication session")
         
-        let urlWithToken = try await session.authenticate(using: authenticateURL, callbackURLScheme: redirectSchema)
+        let urlWithToken = try await session.authenticate(using: authenticateURL, callbackURLScheme: Endpoint.redirectSchema)
         
         print("Received response from authentication service")
         
@@ -38,7 +38,7 @@ public class AutomowerConnect {
             throw AutomowerConnectError.receivedInvalidResponse
         }
         
-        let request = try Endpoint.tokenRequest(clientId: applicationKey, clientSecret: clientSecret, code: code, redirectURI: redirectUri, state: state)
+        let request = try Endpoint.tokenRequest(clientId: applicationKey, clientSecret: clientSecret, code: code, redirectURI: Endpoint.redirectUri, state: state)
         
         let (data, response) = try await URLSession.shared.data(for: request)
         if let httpResponse = response as? HTTPURLResponse {
@@ -77,6 +77,18 @@ public class AutomowerConnect {
 //  "user_id": "610b0aee-3d4f-3ac6-bd8e-786deafa94ce",
 //  "token_type": "Bearer"
 //}
+
+struct Token {
+    let accessToken: String
+    let refreshToken: String
+    let validUntil: Date
+    
+    init(from token: TokenResponse) {
+        accessToken = token.access_token
+        refreshToken = token.refresh_token
+        validUntil = Date().addingTimeInterval(TimeInterval(token.expires_in))
+    }
+}
 
 struct TokenResponse: Decodable {
     var access_token: String
@@ -128,6 +140,9 @@ struct Endpoint {
         
         return url
     }
+    
+    static let redirectSchema = "automower"
+    static var redirectUri: String { "\(redirectSchema)://" }
     
     //"https://api.authentication.husqvarnagroup.dev/v1/oauth2/authorize?client_id=<APP KEY>&redirect_uri=<REDIRECT_URI>"
     static func authenticate(clientId: String, redirect: String) -> Self {
