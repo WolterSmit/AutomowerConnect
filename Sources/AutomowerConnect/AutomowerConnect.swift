@@ -1,9 +1,6 @@
 import Foundation
 import SwiftUI
 import AuthenticationServices
-import OSLog
-
-let logger = Logger(subsystem: "com.topdesk.AutomowerConnect", category: "authenticate")
 
 public class AutomowerConnect {
         
