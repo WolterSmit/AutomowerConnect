@@ -30,7 +30,7 @@ public class AutomowerConnect {
         }
                 
         do {
-            let tokenResponse = try JSONDecoder().decode(TokenResponse.self, from: data)
+            let tokenResponse = try JSONDecoder().decode(TokenDTO.self, from: data)
             token = Token(from: tokenResponse)
         } catch {
             let string = String(data: data, encoding: .utf8) ?? "<none>"
@@ -117,14 +117,14 @@ struct Token {
     let refreshToken: String?
     let validUntil: Date
     
-    init(from token: TokenResponse) {
+    init(from token: TokenDTO) {
         accessToken = token.access_token
         refreshToken = token.refresh_token
         validUntil = Date().addingTimeInterval(TimeInterval(token.expires_in))
     }
 }
 
-struct TokenResponse: Decodable {
+struct TokenDTO: Decodable {
     var access_token: String
     var scope: String
     var expires_in: Int
