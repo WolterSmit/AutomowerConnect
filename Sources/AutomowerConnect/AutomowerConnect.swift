@@ -46,7 +46,7 @@ public class AutomowerConnect {
         }
                 
         do {
-            var tokenResponse = try JSONDecoder().decode(TokenResponse.self, from: data)
+            let tokenResponse = try JSONDecoder().decode(TokenResponse.self, from: data)
             token = Token(from: tokenResponse)
         } catch {
             throw AutomowerConnectError.cannotDecode(error)
