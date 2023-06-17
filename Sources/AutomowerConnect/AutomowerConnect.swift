@@ -17,23 +17,7 @@ public class AutomowerConnect {
         self.clientSecret = clientSecret
     }
     
-    public func startAuthentication(session: WebAuthenticationSession) async throws {
-        let authenticateURL = try Endpoint.authenticate(clientId: applicationKey, redirect: Endpoint.redirectUri).url()
-        
-        print("Starting authentication session")
-        
-        let urlWithToken = try await session.authenticate(using: authenticateURL, callbackURLScheme: Endpoint.redirectSchema)
-        
-        print("Received response from authentication service")
-        
-        guard let queryItems = URLComponents(string: urlWithToken.absoluteString)?.queryItems,
-              let codeProperty = queryItems.filter({ $0.name == "code" }).first?.value,
-              let stateProperty = queryItems.filter({ $0.name == "state" }).first?.value else {
-            throw AutomowerConnectError.receivedInvalidResponse
-        }
-        
-        let request = try Endpoint.tokenRequest(clientId: applicationKey, clientSecret: clientSecret, code: codeProperty, redirectURI: Endpoint.redirectUri, state: stateProperty)
-        
+    func getToken(for request: URLRequest) async throws {
         let (data, response) = try await URLSession.shared.data(for: request)
         if let httpResponse = response as? HTTPURLResponse {
             switch httpResponse.statusCode {
@@ -49,8 +33,66 @@ public class AutomowerConnect {
             let tokenResponse = try JSONDecoder().decode(TokenResponse.self, from: data)
             token = Token(from: tokenResponse)
         } catch {
-            throw AutomowerConnectError.cannotDecode(error)
+            let string = String(data: data, encoding: .utf8) ?? "<none>"
+            throw AutomowerConnectError.cannotDecode(string, error)
         }
+    }
+    
+    public func authenticateClientCredentials() async throws {
+        let request = try Endpoint.tokenClientCredentials(clientId: applicationKey, clientSecret: clientSecret)
+        
+        try await getToken(for: request)
+        
+    }
+    
+    public func startAuthentication(session: WebAuthenticationSession) async throws {
+        let authenticateURL = try Endpoint.authenticate(clientId: applicationKey, redirect: Endpoint.redirectUri).url()
+        
+        print("Starting authentication session")
+        
+        let urlWithToken = try await session.authenticate(using: authenticateURL, callbackURLScheme: Endpoint.redirectSchema)
+        
+        print("Received response from authentication service")
+        
+        guard let queryItems = URLComponents(string: urlWithToken.absoluteString)?.queryItems,
+              let codeProperty = queryItems.filter({ $0.name == "code" }).first?.value,
+              let stateProperty = queryItems.filter({ $0.name == "state" }).first?.value else {
+            throw AutomowerConnectError.receivedInvalidResponse
+        }
+        
+        let request = try Endpoint.tokenAuthorizationGrant(clientId: applicationKey, clientSecret: clientSecret, code: codeProperty, redirectURI: Endpoint.redirectUri, state: stateProperty)
+        
+        try await getToken(for: request)
+    }
+    
+    public func getMowers() async throws -> Data {
+        return try await get(.mowers)
+    }
+    
+    func get(_ endpoint: Endpoint) async throws -> Data {
+        guard let token = token else {
+            throw AutomowerConnectError.notLoggedIn
+        }
+        var request = URLRequest(url: try endpoint.url())
+        
+        request.addValue("Bearer \(token.accessToken)", forHTTPHeaderField: "Authorization")
+        request.addValue("husqvarna", forHTTPHeaderField: "Authorization-Provider")
+        request.addValue(applicationKey, forHTTPHeaderField: "X-Api-Key")
+        
+        print(request.allHTTPHeaderFields ?? [:])
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        if let httpResponse = response as? HTTPURLResponse {
+            switch httpResponse.statusCode {
+            case 200, 201: break
+            case 400: throw AutomowerConnectError.badRequest
+            case 401: throw AutomowerConnectError.unauthorized
+            default:
+                throw AutomowerConnectError.invalidStatusCode(httpResponse.statusCode)
+            }
+        }
+        
+        return data
     }
     
 }
@@ -67,7 +109,7 @@ public class AutomowerConnect {
 
 struct Token {
     let accessToken: String
-    let refreshToken: String
+    let refreshToken: String?
     let validUntil: Date
     
     init(from token: TokenResponse) {
@@ -81,7 +123,7 @@ struct TokenResponse: Decodable {
     var access_token: String
     var scope: String
     var expires_in: Int
-    var refresh_token: String
+    var refresh_token: String?
     var provider: String
     var user_id: String
     var token_type: String
@@ -143,26 +185,43 @@ struct Endpoint {
         )
     }
     
-    //"<REDIRECT_URI>?code=<AUTHORIZATION_CODE>&state=<STATE>"
     static var token: Self {
         return Endpoint(path: "/v1/oauth2/token", api: .authentication)
     }
     
-//     curl -X POST -d \
-//    --url "https://api.authentication.husqvarnagroup.dev/v1/oauth2/token" \
-//    --header "content-type: application/x-www-form-urlencoded" \
-//    --data "grant_type=authorization_code&client_id=<APP KEY>&client_secret=<CLIENT_SECRET>&code=<AUTHORIZATION_CODE>&redirect_uri=<REDIRECT_URI>&state=<STATE>"
-    static func tokenRequest(clientId: String, clientSecret: String, code: String, redirectURI: String, state: String) throws  -> URLRequest {
+    
+//    curl --location --request POST 'https://api.authentication.husqvarnagroup.dev/v1/oauth2/token' \
+//    --header 'Content-Type: application/x-www-form-urlencoded' \
+//    --data-urlencode 'client_id=<APP KEY>' \
+//    --data-urlencode 'client_secret=<CLIENT_SECRET>' \
+//    --data-urlencode 'grant_type=client_credentials'
+    static func tokenClientCredentials(clientId: String, clientSecret: String) throws -> URLRequest {
         var url = URLRequest(url: try Endpoint.token.url())
-        let data = "grant_type=authorization_code&client_id=\(clientId)&client_secret=\(clientSecret)&code=\(code)&redirect_uri=\(redirectURI)&state=\(state)"
+        let data = "grant_type=client_credentials&client_id=\(clientId)&client_secret=\(clientSecret)"
         
-        url.httpMethod = "POST";
+        url.httpMethod = "POST"
         url.addValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         url.httpBody = Data(data.utf8)
         
         return url
     }
     
+//     curl -X POST -d \
+//    --url "https://api.authentication.husqvarnagroup.dev/v1/oauth2/token" \
+//    --header "content-type: application/x-www-form-urlencoded" \
+//    --data "grant_type=authorization_code&client_id=<APP KEY>&client_secret=<CLIENT_SECRET>&code=<AUTHORIZATION_CODE>&redirect_uri=<REDIRECT_URI>&state=<STATE>"
+    static func tokenAuthorizationGrant(clientId: String, clientSecret: String, code: String, redirectURI: String, state: String) throws  -> URLRequest {
+        var url = URLRequest(url: try Endpoint.token.url())
+        let data = "grant_type=authorization_code&client_id=\(clientId)&client_secret=\(clientSecret)&code=\(code)&redirect_uri=\(redirectURI)&state=\(state)"
+        
+        url.httpMethod = "POST"
+        url.addValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        url.httpBody = Data(data.utf8)
+        
+        return url
+    }
+    
+    static let mowers = Endpoint(path: "/v1/mowers", api: .husqvarna)
 }
 
 
@@ -173,8 +232,9 @@ public enum AutomowerConnectError: Error {
     case badRequest
     case unauthorized
     case invalidStatusCode(Int)
-    case cannotDecode(Error)
+    case cannotDecode(String, Error)
     case cannotFindBundle
+    case notLoggedIn
     
     
     var localizedDescription: String {
@@ -185,8 +245,9 @@ public enum AutomowerConnectError: Error {
         case .badRequest: return "bad request"
         case .unauthorized: return "unauthorized"
         case .invalidStatusCode(let code): return "invalid status code \(code)"
-        case .cannotDecode(let error): return "cannot decode \(error.localizedDescription)"
+        case .cannotDecode(let string, let error): return "cannot decode\n\(string)\n\(error.localizedDescription)"
         case .cannotFindBundle: return "cannot find bundle for credentials"
+        case .notLoggedIn: return "not logged in. We do not have a token"
         }
     }
 }
